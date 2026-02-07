@@ -1,0 +1,16 @@
+.vercel
+.env*.local
+__pycache__/
+*.pyc
+.env
+.DS_Store
+*.log
+local_image_process/output/
+data/
+Momentography/node_modules/
+Momentography/.next/
+Momentography/data/
+Momentography/backup_data/
+nul
+*.swp
+*.swo

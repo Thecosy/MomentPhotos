@@ -1,0 +1,1117 @@
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { motion } from 'framer-motion';
+import { DndContext, closestCenter } from '@dnd-kit/core';
+import { arrayMove, SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { 
+  Star, 
+  MagnifyingGlass, 
+  SortAscending, 
+  SortDescending, 
+  CloudArrowUp, 
+  Spinner,
+  Camera,
+  Calendar,
+  MapPin,
+  Sliders,
+  X,
+  Clock,
+  CheckCircle,
+  XCircle,
+  Info,
+  Warning,
+  Database,
+  DownloadSimple
+} from '@phosphor-icons/react';
+import { parseExifDate } from '@/app/utils/dateFormat';
+import { updateImageStar } from '@/app/utils/dbUtils';
+import { updateAlbumsJsonData } from '@/app/utils/ossUtils';
+import PhotoDetail from '@/app/components/PhotoDetail';
+
+// 定义照片接口
+interface Photo {
+  id: string;
+  url: string;
+  title: string;
+  location: string;
+  date: string;
+  parsedDate: Date | null;
+  cameraModel: string;
+  star: number;
+  likes: number;
+  album_id: string;
+  album_title: string;
+  exif?: {
+    camera_model: string;
+    lens_model: string;
+    f_number: number;
+    exposure_time: string;
+    iso: number;
+    focal_length: string;
+    location: string;
+    date_time: string;
+    raw?: any;
+  };
+}
+
+function SortableThumb({ url }: { url: string }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: url });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className={`relative rounded-md overflow-hidden border ${isDragging ? 'opacity-70' : 'opacity-100'}`}
+    >
+      <div className="relative w-full h-20 bg-gray-100 dark:bg-gray-700">
+        <Image src={url} alt={url} fill className="object-cover" />
+      </div>
+    </div>
+  );
+}
+
+export default function AdminPage() {
+  const router = useRouter();
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [sortBy, setSortBy] = useState<'date' | 'star'>('date');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterCamera, setFilterCamera] = useState<string>('all');
+  const [cameras, setCameras] = useState<string[]>([]);
+  const [locations, setLocations] = useState<string[]>([]);
+  const [filterLocation, setFilterLocation] = useState<string>('all');
+  const [showFilters, setShowFilters] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ success?: boolean; message?: string } | null>(null);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
+  const [showOnlyIncomplete, setShowOnlyIncomplete] = useState(false);
+  const filtersRef = useRef<HTMLDivElement>(null);
+  const [heroTitle, setHeroTitle] = useState('Through The Lens');
+  const [heroSubtitle, setHeroSubtitle] = useState('记录光与影的诗意，捕捉生活的瞬间之美');
+  const [heroBg, setHeroBg] = useState('');
+  const [heroBgList, setHeroBgList] = useState<string[]>([]);
+  const [heroCtaBrowse, setHeroCtaBrowse] = useState('浏览作品集');
+  const [heroCtaMap, setHeroCtaMap] = useState('探索地图');
+  const [heroCtaBrowseLink, setHeroCtaBrowseLink] = useState('/browse');
+  const [heroCtaMapLink, setHeroCtaMapLink] = useState('/map');
+  const [timelineTitle, setTimelineTitle] = useState('时光印记');
+  const [timelineSubtitle, setTimelineSubtitle] = useState('每一帧都是时间的切片，记录光影流转的瞬间');
+  const [timelineCtaLabel, setTimelineCtaLabel] = useState('探索完整时间线');
+  const [timelineCtaLink, setTimelineCtaLink] = useState('/browse');
+  const [settingsStatus, setSettingsStatus] = useState<string | null>(null);
+  const [isSelectingHeroBg, setIsSelectingHeroBg] = useState(false);
+
+  // 加载照片数据
+  const loadPhotos = async () => {
+    try {
+      setLoading(true);
+      
+      // 从 API 获取照片数据
+      const response = await fetch('/api/photos/list?withExif=true');
+      
+      if (!response.ok) {
+        throw new Error('获取照片数据失败');
+      }
+      
+      const data = await response.json();
+      
+      // 处理照片数据
+      const processedPhotos = data.photos.map((photo: any) => {
+        // 解析日期
+        const parsedDate = photo.date ? parseExifDate(photo.date) : null;
+        
+        return {
+          id: photo.id,
+          url: photo.url,
+          title: photo.title || photo.album_title || '',
+          location: photo.location || '',
+          date: photo.date || '',
+          parsedDate,
+          cameraModel: photo.exif?.camera_model || '',
+          star: photo.star || 0,
+          likes: photo.likes || 0,
+          album_id: photo.album_id,
+          album_title: photo.album_title || '',
+          exif: photo.exif
+        };
+      });
+      
+      // 提取所有相机型号
+      const uniqueCameras = [...new Set(processedPhotos.map((p: Photo) => p.cameraModel).filter(Boolean))] as string[];
+      setCameras(uniqueCameras);
+      
+      // 提取所有位置
+      const uniqueLocations = [...new Set(processedPhotos.map((p: Photo) => p.location).filter(Boolean))] as string[];
+      setLocations(uniqueLocations);
+      
+      setPhotos(processedPhotos);
+      // 如果有已选照片，刷新其数据，避免详情页仍显示旧值
+      if (selectedPhoto) {
+        const refreshed = processedPhotos.find((p: Photo) => p.id === selectedPhoto.id);
+        if (refreshed) {
+          setSelectedPhoto(refreshed);
+        }
+      }
+    } catch (error) {
+      console.error('加载照片时出错:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 获取最后同步时间
+  const getLastSyncTime = async () => {
+    try {
+      // 添加时间戳参数，确保每次请求都是新的
+      const timestamp = new Date().getTime();
+      const response = await fetch(`/api/files/lastModified?type=albums&_t=${timestamp}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.lastModified) {
+          setLastSyncTime(data.lastModified);
+        }
+      }
+    } catch (error) {
+      console.error('获取最后同步时间失败:', error);
+    }
+  };
+
+  const loadSettings = async () => {
+    try {
+      const resp = await fetch('/api/admin/settings');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const settings = data.settings || {};
+      if (settings.hero_title) setHeroTitle(settings.hero_title);
+      if (settings.hero_subtitle) setHeroSubtitle(settings.hero_subtitle);
+      if (settings.hero_bg) setHeroBg(settings.hero_bg);
+      if (settings.hero_cta_browse) setHeroCtaBrowse(settings.hero_cta_browse);
+      if (settings.hero_cta_map) setHeroCtaMap(settings.hero_cta_map);
+      if (settings.hero_cta_browse_link) setHeroCtaBrowseLink(settings.hero_cta_browse_link);
+      if (settings.hero_cta_map_link) setHeroCtaMapLink(settings.hero_cta_map_link);
+      if (settings.timeline_title) setTimelineTitle(settings.timeline_title);
+      if (settings.timeline_subtitle) setTimelineSubtitle(settings.timeline_subtitle);
+      if (settings.timeline_cta_label) setTimelineCtaLabel(settings.timeline_cta_label);
+      if (settings.timeline_cta_link) setTimelineCtaLink(settings.timeline_cta_link);
+      if (settings.hero_bg_list) {
+        try {
+          const parsed = JSON.parse(settings.hero_bg_list);
+          if (Array.isArray(parsed)) setHeroBgList(parsed);
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+
+  const saveSettings = async () => {
+    setSettingsStatus(null);
+    try {
+      const resp = await fetch('/api/admin/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hero_title: heroTitle,
+          hero_subtitle: heroSubtitle,
+          hero_bg: heroBg,
+          hero_bg_list: JSON.stringify(heroBgList),
+          hero_cta_browse: heroCtaBrowse,
+          hero_cta_map: heroCtaMap,
+          hero_cta_browse_link: heroCtaBrowseLink,
+          hero_cta_map_link: heroCtaMapLink,
+          timeline_title: timelineTitle,
+          timeline_subtitle: timelineSubtitle,
+          timeline_cta_label: timelineCtaLabel,
+          timeline_cta_link: timelineCtaLink,
+        }),
+      });
+      if (!resp.ok) {
+        setSettingsStatus('保存失败');
+        return;
+      }
+      setSettingsStatus('已保存');
+      setTimeout(() => setSettingsStatus(null), 2000);
+    } catch {
+      setSettingsStatus('保存失败');
+    }
+  };
+
+  useEffect(() => {
+    loadPhotos();
+    getLastSyncTime();
+    loadSettings();
+    
+    // 点击外部关闭筛选面板
+    const handleClickOutside = (event: MouseEvent) => {
+      if (filtersRef.current && !filtersRef.current.contains(event.target as Node)) {
+        setShowFilters(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  const handleHeroDragEnd = (event: any) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setHeroBgList((prev) => {
+      const oldIndex = prev.indexOf(active.id);
+      const newIndex = prev.indexOf(over.id);
+      if (oldIndex === -1 || newIndex === -1) return prev;
+      return arrayMove(prev, oldIndex, newIndex);
+    });
+  };
+
+  // 处理照片点击事件
+  const handlePhotoClick = (photo: Photo) => {
+    setSelectedPhoto(photo);
+  };
+
+  // 处理照片详情关闭事件
+  const handlePhotoDetailClose = () => {
+    setSelectedPhoto(null);
+  };
+
+  // 处理星级更新
+  const handleStarUpdate = async (photoId: string, newStar: number) => {
+    try {
+      // 调用API更新星级
+      const response = await fetch('/api/photos/update-star', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ photoId, star: newStar }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('更新星级失败');
+      }
+      
+      // 更新本地状态
+      setPhotos(prevPhotos => 
+        prevPhotos.map(photo => 
+          photo.id === photoId ? { ...photo, star: newStar } : photo
+        )
+      );
+    } catch (error) {
+      console.error('更新星级失败:', error);
+      throw error;
+    }
+  };
+
+  // 处理同步数据
+  const handleSyncData = async () => {
+    setSyncLoading(true);
+    setSyncResult(null);
+    
+    try {
+      const result = await updateAlbumsJsonData();
+      setSyncResult(result);
+      
+      if (result.success) {
+        // 刷新照片数据和同步时间
+        await loadPhotos();
+        await getLastSyncTime();
+      }
+    } catch (error) {
+      setSyncResult({ 
+        success: false, 
+        message: `同步失败: ${error instanceof Error ? error.message : String(error)}` 
+      });
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  // 处理数据库备份
+  const handleDatabaseBackup = () => {
+    // 创建一个隐藏的a标签用于下载
+    const link = document.createElement('a');
+    link.href = '/api/data/backup';
+    link.download = `gallery-backup-${new Date().toISOString()}.db`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // 检查EXIF数据是否完善
+  const isExifComplete = (exif?: Photo['exif']): boolean => {
+    if (!exif) return false;
+    
+    // 检查关键EXIF字段是否存在且不为null或"未知"
+    const requiredFields = [
+      'camera_model',
+      'lens_model',
+      'f_number',
+      'exposure_time',
+      'iso',
+      'focal_length',
+      'location',
+      'date_time'
+    ];
+    
+    for (const field of requiredFields) {
+      const value = exif[field as keyof typeof exif];
+      if (!value || 
+          (typeof value === 'string' && value.toLowerCase().includes('未知')) ||
+          value === null) {
+        return false;
+      }
+    }
+    
+    return true;
+  };
+
+  // 计算EXIF完善度
+  const calculateExifCompleteness = (exif?: Photo['exif']): number => {
+    if (!exif) return 0;
+    
+    const requiredFields = [
+      'camera_model',
+      'lens_model',
+      'f_number',
+      'exposure_time',
+      'iso',
+      'focal_length',
+      'location',
+      'date_time'
+    ];
+    
+    let completedFields = 0;
+    
+    for (const field of requiredFields) {
+      const value = exif[field as keyof typeof exif];
+      if (value && 
+          !(typeof value === 'string' && value.toLowerCase().includes('未知')) &&
+          value !== null) {
+        completedFields++;
+      }
+    }
+    
+    return Math.round((completedFields / requiredFields.length) * 100);
+  };
+
+  // 格式化日期时间
+  const formatDateTime = (dateTimeStr: string | null) => {
+    if (!dateTimeStr) return '未知';
+    
+    try {
+      const date = new Date(dateTimeStr);
+      
+      // 检查日期是否有效
+      if (isNaN(date.getTime())) {
+        console.warn('无效的日期字符串:', dateTimeStr);
+        return '未知';
+      }
+      
+      // 将UTC时间转换为东八区时间
+      // 创建一个新的日期对象，加上8小时的时差
+      const beijingDate = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+      
+      // 格式化北京时间
+      return beijingDate.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+    } catch (e) {
+      console.error('格式化日期时出错:', e);
+      return dateTimeStr;
+    }
+  };
+
+  // 筛选和排序照片
+  const filteredAndSortedPhotos = photos
+    .filter(photo => {
+      // 搜索过滤
+      if (searchTerm) {
+        const searchLower = searchTerm.toLowerCase();
+        const matchesSearch = 
+          (photo.title && photo.title.toLowerCase().includes(searchLower)) ||
+          (photo.location && photo.location.toLowerCase().includes(searchLower)) ||
+          (photo.album_title && photo.album_title.toLowerCase().includes(searchLower));
+        
+        if (!matchesSearch) return false;
+      }
+      
+      // 相机过滤
+      if (filterCamera !== 'all' && photo.cameraModel !== filterCamera) {
+        return false;
+      }
+      
+      // 位置过滤
+      if (filterLocation !== 'all' && photo.location !== filterLocation) {
+        return false;
+      }
+      
+      // 只显示不完善的照片
+      if (showOnlyIncomplete) {
+        return !isExifComplete(photo.exif);
+      }
+      
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'date') {
+        // 按照日期排序
+        if (a.date && b.date) {
+          return sortOrder === 'asc' 
+            ? new Date(a.date).getTime() - new Date(b.date).getTime()
+            : new Date(b.date).getTime() - new Date(a.date).getTime();
+        }
+        
+        // 如果没有日期，有日期的排在前面
+        if (a.date && !b.date) return sortOrder === 'asc' ? -1 : 1;
+        if (!a.date && b.date) return sortOrder === 'asc' ? 1 : -1;
+        
+        // 如果都没有日期，按照标题排序
+        return (a.title || '').localeCompare(b.title || '');
+      } else {
+        // 按照星级排序
+        return sortOrder === 'asc' 
+          ? (a.star || 0) - (b.star || 0)
+          : (b.star || 0) - (a.star || 0);
+      }
+    });
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 pb-12">
+      <div className="container mx-auto px-4 py-8">
+        {/* 顶部导航和标题 */}
+        <motion.div 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-6"
+        >
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center">
+              <Camera size={28} className="mr-2 text-blue-500" />
+              摄影管理系统
+            </h1>
+            
+            {/* 同步按钮组 */}
+            <div className="flex flex-wrap gap-3">
+              <motion.button
+                onClick={handleSyncData}
+                disabled={syncLoading}
+                whileHover={!syncLoading ? { scale: 1.02 } : {}}
+                whileTap={!syncLoading ? { scale: 0.98 } : {}}
+                className={`px-4 py-2 rounded-lg flex items-center justify-center ${
+                  syncLoading
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-md'
+                } transition-all`}
+              >
+                {syncLoading ? (
+                  <>
+                    <Spinner size={18} className="animate-spin mr-2" />
+                    同步中...
+                  </>
+                ) : (
+                  <>
+                    <CloudArrowUp size={18} className="mr-2" />
+                    同步 OSS 数据
+                  </>
+                )}
+              </motion.button>
+              
+              <motion.button
+                onClick={handleDatabaseBackup}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg shadow-md transition-colors flex items-center"
+              >
+                <DownloadSimple size={18} className="mr-2" />
+                备份数据库
+              </motion.button>
+              
+              <button
+                onClick={() => router.push('/admin/albums')}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg shadow-md transition-colors flex items-center"
+              >
+                <Database size={18} className="mr-2" />
+                相册管理
+              </button>
+              
+              <button
+                onClick={() => router.push('/admin/oss')}
+                className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors flex items-center"
+              >
+                <Info size={18} className="mr-2" />
+                OSS 详细信息
+              </button>
+            </div>
+          </div>
+          
+          {/* 同步状态和时间 */}
+          <div className="mt-4 flex items-center text-sm text-gray-500 dark:text-gray-400">
+            <Clock size={16} className="mr-2" />
+            <span>上次同步时间：</span>
+            <span className="ml-1 font-medium">
+              {lastSyncTime ? formatDateTime(lastSyncTime) : '从未同步'}
+            </span>
+          </div>
+          
+          {/* 同步结果提示 */}
+          {syncResult && (
+            <motion.div 
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className={`mt-4 p-3 rounded-md flex items-start ${
+                syncResult.success ? 'bg-green-50 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+              }`}
+            >
+              {syncResult.success ? (
+                <CheckCircle size={18} weight="fill" className="mr-2 mt-0.5 flex-shrink-0" />
+              ) : (
+                <XCircle size={18} weight="fill" className="mr-2 mt-0.5 flex-shrink-0" />
+              )}
+              <div>
+                {syncResult.message}
+              </div>
+            </motion.div>
+          )}
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-6"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">首页文案与背景</h2>
+            <div className="flex items-center gap-3">
+              {settingsStatus && (
+                <span className="text-sm text-gray-600 dark:text-gray-300">{settingsStatus}</span>
+              )}
+              <button
+                onClick={saveSettings}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-600 dark:text-gray-300 mb-2">标题</label>
+              <input
+                value={heroTitle}
+                onChange={(e) => setHeroTitle(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 dark:text-gray-300 mb-2">副标题</label>
+              <input
+                value={heroSubtitle}
+                onChange={(e) => setHeroSubtitle(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 dark:text-gray-300 mb-2">按钮文案（浏览）</label>
+              <input
+                value={heroCtaBrowse}
+                onChange={(e) => setHeroCtaBrowse(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 dark:text-gray-300 mb-2">按钮文案（时间线）</label>
+              <input
+                value={heroCtaMap}
+                onChange={(e) => setHeroCtaMap(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 dark:text-gray-300 mb-2">按钮链接（浏览）</label>
+              <input
+                value={heroCtaBrowseLink}
+                onChange={(e) => setHeroCtaBrowseLink(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 dark:text-gray-300 mb-2">按钮链接（时间线）</label>
+              <input
+                value={heroCtaMapLink}
+                onChange={(e) => setHeroCtaMapLink(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-sm text-gray-600 dark:text-gray-300 mb-2">背景图片 URL</label>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <input
+                  value={heroBg}
+                  onChange={(e) => setHeroBg(e.target.value)}
+                  placeholder="https://..."
+                  className="flex-1 px-3 py-2 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const trimmed = heroBg.trim();
+                    if (!trimmed) return;
+                    setHeroBg('');
+                    setHeroBgList((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
+                  }}
+                  className="px-4 py-2 rounded-md bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200"
+                >
+                  添加
+                </button>
+              </div>
+            </div>
+            <div className="md:col-span-2">
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-sm text-gray-600 dark:text-gray-300">背景选择</span>
+                <button
+                  onClick={() => setIsSelectingHeroBg((v) => !v)}
+                  className="px-3 py-1 text-xs rounded bg-blue-200 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200"
+                >
+                  {isSelectingHeroBg ? '结束选择' : '开始选择'}
+                </button>
+                <button
+                  onClick={() => {
+                    setHeroBg('');
+                    setHeroBgList([]);
+                    setIsSelectingHeroBg(false);
+                  }}
+                  className="px-3 py-1 text-xs rounded bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200"
+                >
+                  使用轮播精选
+                </button>
+                <button
+                  onClick={() => {
+                    setHeroBgList([]);
+                    setIsSelectingHeroBg(false);
+                  }}
+                  className="px-3 py-1 text-xs rounded bg-red-200 dark:bg-red-900/40 text-red-800 dark:text-red-200"
+                >
+                  清空选择
+                </button>
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  已选 {heroBgList.length} 张
+                </span>
+              </div>
+              {heroBgList.length > 0 && (
+                <div className="mb-3">
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">已选背景（可拖拽排序）</div>
+                  <DndContext collisionDetection={closestCenter} onDragEnd={handleHeroDragEnd}>
+                    <SortableContext items={heroBgList} strategy={rectSortingStrategy}>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                        {heroBgList.map((url) => (
+                          <SortableThumb key={url} url={url} />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                </div>
+              )}
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                {isSelectingHeroBg ? '请在下方照片列表中点击选择背景' : '点击开始选择后，从下方照片列表中选择背景'}
+              </div>
+            </div>
+            <div className="md:col-span-2 mt-2">
+              <div className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-3">时光印记</div>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 dark:text-gray-300 mb-2">标题</label>
+              <input
+                value={timelineTitle}
+                onChange={(e) => setTimelineTitle(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 dark:text-gray-300 mb-2">副标题</label>
+              <input
+                value={timelineSubtitle}
+                onChange={(e) => setTimelineSubtitle(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 dark:text-gray-300 mb-2">按钮文案</label>
+              <input
+                value={timelineCtaLabel}
+                onChange={(e) => setTimelineCtaLabel(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 dark:text-gray-300 mb-2">按钮链接</label>
+              <input
+                value={timelineCtaLink}
+                onChange={(e) => setTimelineCtaLink(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+              />
+            </div>
+          </div>
+          
+        </motion.div>
+        
+        {/* 搜索和筛选 */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-6"
+        >
+          <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
+            {/* 搜索框 */}
+            <div className="relative flex-grow">
+              <MagnifyingGlass size={20} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="搜索照片标题、位置或相册..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              />
+            </div>
+            
+            {/* 只看不完善按钮 */}
+            <button
+              onClick={() => setShowOnlyIncomplete(!showOnlyIncomplete)}
+              className={`px-4 py-2 rounded-lg flex items-center ${
+                showOnlyIncomplete 
+                  ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300' 
+                  : 'bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
+              }`}
+            >
+              <Warning size={18} className="mr-2" />
+              {showOnlyIncomplete ? '只看不完善' : '显示不完善照片'}
+            </button>
+            
+            {/* 排序控制 */}
+            <div className="flex gap-2">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as 'date' | 'star')}
+                className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              >
+                <option value="date">按日期</option>
+                <option value="star">按星级</option>
+              </select>
+              
+              <button
+                onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+                className="p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                title={sortOrder === 'asc' ? '升序' : '降序'}
+              >
+                {sortOrder === 'asc' ? <SortAscending size={20} /> : <SortDescending size={20} />}
+              </button>
+              
+              <div className="relative">
+                <button
+                  onClick={() => setShowFilters(!showFilters)}
+                  className={`p-2 border rounded-lg flex items-center ${
+                    showFilters 
+                      ? 'bg-blue-100 border-blue-300 text-blue-800 dark:bg-blue-900/50 dark:border-blue-700 dark:text-blue-300' 
+                      : 'border-gray-300 bg-white dark:border-gray-600 dark:bg-gray-700 text-gray-900 dark:text-white'
+                  }`}
+                  title="更多筛选"
+                >
+                  <Sliders size={20} />
+                </button>
+                
+                {showFilters && (
+                  <motion.div 
+                    ref={filtersRef}
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="absolute right-0 mt-2 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4 z-10 border border-gray-200 dark:border-gray-700"
+                  >
+                    <div className="flex justify-between items-center mb-3">
+                      <h3 className="font-medium text-gray-900 dark:text-white">高级筛选</h3>
+                      <button 
+                        onClick={() => setShowFilters(false)}
+                        className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          相机型号
+                        </label>
+                        <select
+                          value={filterCamera}
+                          onChange={(e) => setFilterCamera(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                        >
+                          <option value="all">所有相机</option>
+                          {cameras.map(camera => (
+                            <option key={camera} value={camera}>{camera}</option>
+                          ))}
+                        </select>
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          拍摄位置
+                        </label>
+                        <select
+                          value={filterLocation}
+                          onChange={(e) => setFilterLocation(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                        >
+                          <option value="all">所有位置</option>
+                          {locations.map(location => (
+                            <option key={location} value={location}>{location}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </div>
+            </div>
+          </div>
+          
+          {/* 活跃筛选器标签 */}
+          <div className="flex flex-wrap gap-2 mt-4">
+            {searchTerm && (
+              <div className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+                <span className="mr-1">搜索:</span>
+                <span className="font-medium">{searchTerm}</span>
+                <button 
+                  onClick={() => setSearchTerm('')}
+                  className="ml-2 text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+            
+            {filterCamera !== 'all' && (
+              <div className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
+                <Camera size={14} className="mr-1" />
+                <span className="font-medium">{filterCamera}</span>
+                <button 
+                  onClick={() => setFilterCamera('all')}
+                  className="ml-2 text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-200"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+            
+            {filterLocation !== 'all' && (
+              <div className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
+                <MapPin size={14} className="mr-1" />
+                <span className="font-medium">{filterLocation}</span>
+                <button 
+                  onClick={() => setFilterLocation('all')}
+                  className="ml-2 text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-200"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+            
+            {showOnlyIncomplete && (
+              <div className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
+                <Warning size={14} className="mr-1" />
+                <span className="font-medium">只看不完善</span>
+                <button 
+                  onClick={() => setShowOnlyIncomplete(false)}
+                  className="ml-2 text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 dark:hover:text-yellow-200"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+          </div>
+          
+          {/* 照片数量统计 */}
+          <div className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+            共 {filteredAndSortedPhotos.length} 张照片
+            {(searchTerm || filterCamera !== 'all' || filterLocation !== 'all' || showOnlyIncomplete) && ' (已筛选)'}
+          </div>
+        </motion.div>
+        
+        {/* 照片列表 */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6"
+        >
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+              <p className="text-gray-500 dark:text-gray-400">加载照片中...</p>
+            </div>
+          ) : filteredAndSortedPhotos.length === 0 ? (
+            <div className="text-center py-12">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-700 mb-4">
+                <Camera size={32} className="text-gray-400" />
+              </div>
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">没有找到照片</h3>
+              <p className="text-gray-500 dark:text-gray-400">
+                尝试调整筛选条件或清除搜索关键词
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {filteredAndSortedPhotos.map((photo) => (
+                <motion.div 
+                  key={photo.id} 
+                  whileHover={{ y: -5 }}
+                  className="bg-gray-50 dark:bg-gray-700 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-all cursor-pointer"
+                  onClick={() => {
+                    if (isSelectingHeroBg) {
+                      setHeroBg('');
+                      setHeroBgList((prev) => {
+                        if (prev.includes(photo.url)) {
+                          return prev.filter((u) => u !== photo.url);
+                        }
+                        return [...prev, photo.url];
+                      });
+                      return;
+                    }
+                    handlePhotoClick(photo);
+                  }}
+                >
+                  {/* 照片预览 */}
+                  <div className={`relative aspect-[4/3] group ${
+                    isSelectingHeroBg && heroBgList.includes(photo.url) ? 'ring-2 ring-blue-500' : ''
+                  }`}>
+                    <Image
+                      src={photo.url}
+                      alt={photo.title}
+                      fill
+                      className="object-cover"
+                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                    />
+                    
+                    {/* EXIF状态标记 */}
+                    <div className={`absolute top-2 right-2 px-2 py-1 rounded-full text-xs font-medium ${
+                      isExifComplete(photo.exif)
+                        ? 'bg-green-500 text-white'
+                        : photo.exif && calculateExifCompleteness(photo.exif) > 50
+                          ? 'bg-yellow-500 text-white'
+                          : 'bg-red-500 text-white'
+                    }`}>
+                      {isExifComplete(photo.exif)
+                        ? 'EXIF 已完善'
+                        : photo.exif && calculateExifCompleteness(photo.exif) > 0
+                          ? `完善度 ${calculateExifCompleteness(photo.exif)}%`
+                          : 'EXIF 缺失'}
+                    </div>
+                    
+                    {/* 悬停时显示的信息 */}
+                    <div className="absolute inset-0 bg-black bg-opacity-60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-4">
+                      <div className="text-white text-sm mb-2">
+                        <div className="flex items-center mb-1">
+                          <Calendar size={14} className="mr-1" />
+                          {(() => {
+                            const dateValue = photo.exif?.date_time || photo.date;
+                            if (!dateValue) return '无日期';
+                            const parsed = parseExifDate(dateValue);
+                            return parsed ? parsed.toLocaleDateString() : '无日期';
+                          })()}
+                        </div>
+                        <div className="flex items-center">
+                          <MapPin size={14} className="mr-1" />
+                          {photo.exif?.location || photo.location || '无位置信息'}
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center justify-between">
+                        <div className="text-white text-xs">
+                          {photo.album_title}
+                        </div>
+                        <div className="text-white text-xs flex items-center">
+                          <Camera size={12} className="mr-1" />
+                          {photo.cameraModel || '未知相机'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* 照片信息 */}
+                  <div className="p-4">
+                    <div className="flex justify-between items-start mb-3">
+                      <h3 className="font-medium text-gray-900 dark:text-white truncate" title={photo.title}>
+                        {photo.title || '无标题'}
+                      </h3>
+                    </div>
+                    
+                    {/* 星级评分 */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            key={star}
+                            onClick={(e) => {
+                              e.stopPropagation(); // 阻止冒泡，避免触发照片点击事件
+                              handleStarUpdate(photo.id, star);
+                            }}
+                            className={`w-6 h-6 transition-colors ${
+                              star <= photo.star
+                                ? 'text-yellow-400 hover:text-yellow-500'
+                                : 'text-gray-300 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-500'
+                            }`}
+                          >
+                            <Star weight={star <= photo.star ? "fill" : "regular"} size={20} />
+                          </button>
+                        ))}
+                      </div>
+                      
+                      <span className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
+                        <span className="mr-1">❤️</span>
+                        {photo.likes}
+                      </span>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          )}
+        </motion.div>
+      </div>
+      
+      {/* 照片详情弹窗 */}
+      {selectedPhoto && (
+        <PhotoDetail
+          photo={selectedPhoto}
+          isOpen={!!selectedPhoto}
+          onClose={handlePhotoDetailClose}
+          onStarUpdate={handleStarUpdate}
+          onRefresh={loadPhotos}
+        />
+      )}
+    </div>
+  );
+} 
