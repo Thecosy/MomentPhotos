@@ -185,16 +185,29 @@ export default function BrowsePage() {
     hidden: { opacity: 0 },
     visible: {
       opacity: 1,
-      transition: { staggerChildren: 0.1 }
+      transition: {
+        staggerChildren: 0.05, // 减少延迟，让加载更流畅
+        delayChildren: 0.1
+      }
     }
   };
 
   const itemVariants = {
-    hidden: { y: 20, opacity: 0 },
+    hidden: {
+      y: 50, // 从下方50px开始
+      opacity: 0,
+      scale: 0.9 // 稍微缩小
+    },
     visible: {
       y: 0,
       opacity: 1,
-      transition: { duration: 0.5 }
+      scale: 1,
+      transition: {
+        type: "spring",
+        stiffness: 100,
+        damping: 15,
+        duration: 0.6
+      }
     }
   };
 
@@ -296,40 +309,35 @@ export default function BrowsePage() {
           </div>
         </div>
 
-        {/* 照片网格 */}
+        {/* 照片网格 - 瀑布流布局 */}
         {isLoading ? (
           <div className="flex justify-center">
             <div className="w-12 h-12 border-4 border-gray-300 border-t-gray-800 rounded-full animate-spin" />
           </div>
         ) : (
-          <motion.div 
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
-            variants={containerVariants}
-            initial="hidden"
-            animate="visible"
+          <motion.div
+            className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-6 space-y-6"
           >
-            {filteredAndSortedPhotos.map((photo) => (
+            {filteredAndSortedPhotos.map((photo, index) => (
               <motion.div
                 key={photo.id}
                 variants={itemVariants}
-                className="group"
+                initial="hidden"
+                whileInView="visible"
+                viewport={{ once: true, margin: "-50px" }}
+                className="group break-inside-avoid mb-6"
               >
-                <div 
-                  className={`relative overflow-hidden rounded-lg cursor-pointer ${
-                    photo.exif?.orientation && /90|270|Rotated 90|Rotated 270/i.test(photo.exif.orientation)
-                      ? 'aspect-[3/4]'
-                      : 'aspect-[4/3]'
-                  }`}
+                <div
+                  className="relative overflow-hidden rounded-lg cursor-pointer"
                   onClick={() => setSelectedPhoto(photo)}
                 >
-                  <Image
+                  <img
                     src={photo.url}
                     alt={photo.title}
-                    fill
-                    className="object-cover transition-transform group-hover:scale-105 duration-500"
-                    sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                    className="w-full h-auto object-cover transition-transform group-hover:scale-105 duration-500"
+                    loading="lazy"
                   />
-                  
+
                   {/* 悬停时显示的星级评分 - 只在底部添加阴影 */}
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent h-16 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
                     <div className="flex">
@@ -343,16 +351,16 @@ export default function BrowsePage() {
                     </div>
                   </div>
                 </div>
-                
+
                 <div className="mt-2 flex items-center justify-between">
                   {/* 左侧显示地址信息 */}
                   <div className="flex items-center text-sm text-gray-500">
                     <MapPin size={14} className="mr-1" />
                     <span className="truncate max-w-[150px]">{photo.location}</span>
                   </div>
-                  
+
                   {/* 右侧显示爱心点赞图标和数量 */}
-                  <button 
+                  <button
                     onClick={(e) => handleLike(e, photo.id)}
                     className="flex items-center group/like relative"
                   >
@@ -368,10 +376,10 @@ export default function BrowsePage() {
                         <motion.div
                           key={i}
                           initial={{ x: 0, y: 0, opacity: 1 }}
-                          animate={{ 
-                            x: Math.random() * 40 - 20, 
-                            y: Math.random() * -30 - 10, 
-                            opacity: 0 
+                          animate={{
+                            x: Math.random() * 40 - 20,
+                            y: Math.random() * -30 - 10,
+                            opacity: 0
                           }}
                           transition={{ duration: Math.random() * 0.8 + 0.5, delay: Math.random() * 0.2 }}
                           className="absolute text-red-500"
@@ -380,15 +388,15 @@ export default function BrowsePage() {
                         </motion.div>
                       ))}
                     </motion.div>
-                    
+
                     <motion.div
                       whileTap={{ scale: 1.5 }}
                       transition={{ type: "spring", stiffness: 400, damping: 10 }}
                     >
-                      <Heart 
-                        weight={clickedPhotos.has(photo.id) ? "fill" : "regular"} 
-                        className={`${clickedPhotos.has(photo.id) ? 'text-red-500' : 'text-gray-400'} group-hover/like:text-red-500 transition-colors`} 
-                        size={18} 
+                      <Heart
+                        weight={clickedPhotos.has(photo.id) ? "fill" : "regular"}
+                        className={`${clickedPhotos.has(photo.id) ? 'text-red-500' : 'text-gray-400'} group-hover/like:text-red-500 transition-colors`}
+                        size={18}
                       />
                     </motion.div>
                     <span className="ml-1 text-sm text-gray-600">{photo.likes}</span>
