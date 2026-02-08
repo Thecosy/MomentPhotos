@@ -23,7 +23,8 @@
       "Bash(git branch:*)",
       "Bash(git push:*)",
       "Bash(node scripts/import-json-to-db.js:*)",
-      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: 添加云端删除同步功能和优化图片质量\n\n主要更新：\n- 添加 sync_delete 参数支持删除同步\n- 本地删除的文件会自动从七牛云删除\n- 优化 WebP 质量从 85 降至 60（文件大小 < 500KB）\n- 修复 EXIF 数据键使用 .webp 扩展名\n- 显示删除文件数量统计\n- 提升处理速度（10-15秒/张）\nEOF\n\\)\")"
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: 添加云端删除同步功能和优化图片质量\n\n主要更新：\n- 添加 sync_delete 参数支持删除同步\n- 本地删除的文件会自动从七牛云删除\n- 优化 WebP 质量从 85 降至 60（文件大小 < 500KB）\n- 修复 EXIF 数据键使用 .webp 扩展名\n- 显示删除文件数量统计\n- 提升处理速度（10-15秒/张）\nEOF\n\\)\")",
+      "Bash(git commit:*)"
     ]
   }
 }

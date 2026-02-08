@@ -628,6 +628,17 @@ if __name__ == '__main__':
 
     def run_job():
         print(f"开始处理目录: {directory_to_process}")
+
+        # 在处理前先删除本地已在云端删除的文件
+        try:
+            import sys
+            sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+            from delete_local_files import delete_local_files
+            print("开始同步删除本地文件...")
+            delete_local_files()
+        except Exception as e:
+            print(f"本地文件删除同步失败: {e}")
+
         full_upload = os.getenv('FULL_UPLOAD') == '1'
         # loguru 日志文件（写入项目内 output，避免库目录权限问题）
         safe_log_dir = os.path.join(os.path.dirname(__file__), 'output')

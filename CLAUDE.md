@@ -183,3 +183,7 @@ docker run -d \
 - **Watermark**: Default watermark is `local_image_process/sy.png`, configurable in code
 - **Database location**: Frontend uses `Momentography/data/gallery.db` (SQLite)
 - **Output directory**: Processed images are temporarily stored in `local_image_process/output/` before upload
+- **Bidirectional sync**:
+  - Local deletion → Cloud deletion (automatic during upload)
+  - Cloud deletion → Local deletion (automatic before next upload)
+  - Deleted photos are tracked in `Momentography/data/deleted_photos.json`
