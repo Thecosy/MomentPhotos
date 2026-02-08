@@ -347,9 +347,25 @@ class ImageProcessor:
                     if name:
                         return name
         parts = relative_path.replace('\\', '/').split('/')
+
+        # 如果路径是 images/xxx 格式
         if len(parts) >= 2 and parts[0] == 'images':
-            return parts[1]
-        return parts[0] if parts[0] else 'default'
+            album_name = parts[1]
+        elif parts[0]:
+            album_name = parts[0]
+        else:
+            album_name = 'default'
+
+        # 检查相册名是否看起来像文件名（包含文件扩展名或以DSC/IMG等开头的编号）
+        # 如果是，则归类到"未分类"
+        album_lower = album_name.lower()
+        if (
+            '.' in album_name and any(album_lower.endswith(ext) for ext in ['.webp', '.jpg', '.jpeg', '.png', '.arw', '.dng', '.info']) or
+            album_name.startswith(('DSC', 'IMG', 'DJI', 'DSCF', '_DSC', '_IMG')) and any(c.isdigit() for c in album_name)
+        ):
+            return '未分类'
+
+        return album_name
 
     def _log_progress(self, message: str, progress: float | None = None):
         log_update_sqlite('upload', 'info', message, progress)
