@@ -216,9 +216,9 @@ class ImageProcessor:
 
                 exif_bytes = img.info.get('exif')
                 if exif_bytes:
-                    img.save(output_file, 'webp', quality=85, exif=exif_bytes)
+                    img.save(output_file, 'webp', quality=60, exif=exif_bytes)
                 else:
-                    img.save(output_file, 'webp', quality=85)
+                    img.save(output_file, 'webp', quality=60)
                 add_watermark(output_file, output_file)
 
     def _process_raw_image(self, file_path, output_file):
@@ -251,15 +251,15 @@ class ImageProcessor:
 
             # 先保存为临时 JPEG 以便提取 EXIF
             temp_jpg = output_file.replace('.webp', '_temp.jpg')
-            img.save(temp_jpg, 'JPEG', quality=95)
+            img.save(temp_jpg, 'JPEG', quality=90)
 
-            # 从临时文件读取并转换为 WebP，保留 EXIF，使用高质量
+            # 从临时文件读取并转换为 WebP，保留 EXIF，使用中等质量
             with Image.open(temp_jpg) as temp_img:
                 exif_bytes = temp_img.info.get('exif')
                 if exif_bytes:
-                    temp_img.save(output_file, 'webp', quality=85, method=6, exif=exif_bytes)
+                    temp_img.save(output_file, 'webp', quality=60, method=4, exif=exif_bytes)
                 else:
-                    temp_img.save(output_file, 'webp', quality=85, method=6)
+                    temp_img.save(output_file, 'webp', quality=60, method=4)
 
             # 删除临时文件
             if os.path.exists(temp_jpg):
@@ -276,7 +276,7 @@ class ImageProcessor:
             try:
                 with Image.open(file_path) as img:
                     img = ImageOps.exif_transpose(img)
-                    img.save(output_file, 'webp', quality=85)
+                    img.save(output_file, 'webp', quality=60)
                     add_watermark(output_file, output_file)
                     logger.info(f"使用备用方法处理成功: {file_path}")
             except Exception as e2:
@@ -304,7 +304,10 @@ class ImageProcessor:
                                 readable_exif = convert_exif_to_dict(tags)
                                 relative_path = os.path.relpath(file_path, self.directory_path)
                                 album_id = self._infer_album_id(relative_path, file_path)
-                                image_key = f"{album_id}/{os.path.basename(file_path)}"
+                                # 使用 .webp 扩展名作为键，因为上传的文件是 webp 格式
+                                base_name = os.path.basename(file_path)
+                                name_without_ext = os.path.splitext(base_name)[0]
+                                image_key = f"{album_id}/{name_without_ext}.webp"
                                 exif_data_dict[image_key] = readable_exif
                                 seen_keys.add(image_key)
                                 logger.info(f"处理 {file_path} EXIF信息成功")
@@ -506,16 +509,27 @@ def add_watermark(input_image_path, output_image_path, watermark_path='sy.png', 
             
             
 
-def upload_folder_to_qiniu(src_folder, bucket_name, access_key, secret_key, domain, prefix="gallery/", full_upload: bool = False):
+def upload_folder_to_qiniu(src_folder, bucket_name, access_key, secret_key, domain, prefix="gallery/", full_upload: bool = False, sync_delete: bool = True):
     log_update_sqlite('upload', 'info', '开始上传到七牛', 90)
     configure_qiniu_region()
     q = Auth(access_key, secret_key)
     uploaded = 0
     failed = 0
     skipped = 0
+    deleted = 0
     existing_keys = set()
+    local_files = set()
 
-    # 清理七牛上历史缩略图
+    # 收集本地所有文件
+    for root, dirs, files in os.walk(src_folder):
+        for file in files:
+            if file.endswith('.webp') or file.endswith('.json'):
+                rel_path = os.path.relpath(os.path.join(root, file), src_folder)
+                # 转换为云端路径格式
+                cloud_key = prefix + rel_path.replace('\\', '/')
+                local_files.add(cloud_key)
+
+    # 清理七牛上历史缩略图，并收集现有文件
     try:
         from qiniu import BucketManager
         bm = BucketManager(q)
@@ -529,13 +543,22 @@ def upload_folder_to_qiniu(src_folder, bucket_name, access_key, secret_key, doma
                 if '_thumbnail' in key:
                     try:
                         bm.delete(bucket_name, key)
+                        deleted += 1
                     except Exception:
                         pass
-                if not full_upload and key:
+                elif key:
                     existing_keys.add(key)
+                    # 如果启用删除同步，且云端文件不在本地文件列表中，则删除
+                    if sync_delete and key not in local_files and not key.endswith('exif_data.json'):
+                        try:
+                            bm.delete(bucket_name, key)
+                            deleted += 1
+                            print(f"删除云端文件: {key}")
+                        except Exception as e:
+                            print(f"删除失败 {key}: {e}")
             marker = ret.get('marker')
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"列举文件失败: {e}")
 
     for root, _, files in os.walk(src_folder):
         for filename in files:
@@ -559,12 +582,12 @@ def upload_folder_to_qiniu(src_folder, bucket_name, access_key, secret_key, doma
                 print(f"上传失败: {local_path} -> {key} ({info})")
 
     mode_label = '全量' if full_upload else '增量'
-    print(f"上传完成（{mode_label}）：成功 {uploaded} 个，失败 {failed} 个，跳过 {skipped} 个")
+    print(f"上传完成（{mode_label}）：成功 {uploaded} 个，失败 {failed} 个，跳过 {skipped} 个，删除 {deleted} 个")
     if failed == 0 and domain:
-        log_update_sqlite('upload', 'success', f"上传完成（{mode_label}）：成功 {uploaded} 个，跳过 {skipped} 个", 100)
+        log_update_sqlite('upload', 'success', f"上传完成（{mode_label}）：成功 {uploaded} 个，跳过 {skipped} 个，删除 {deleted} 个", 100)
         print(f"示例访问地址: https://{domain}/{prefix}")
     elif failed > 0:
-        log_update_sqlite('upload', 'error', f"上传完成（{mode_label}）：成功 {uploaded} 个，失败 {failed} 个，跳过 {skipped} 个", 100)
+        log_update_sqlite('upload', 'error', f"上传完成（{mode_label}）：成功 {uploaded} 个，失败 {failed} 个，跳过 {skipped} 个，删除 {deleted} 个", 100)
               
             
 def send_webhook():
@@ -586,8 +609,8 @@ def configure_qiniu_region():
     up_host = os.getenv('QINIU_UP_HOST') or ''
     up_host_backup = os.getenv('QINIU_UP_HOST_BACKUP') or ''
     if not up_host and region in {'z2', 'south', 'huanan', 'gd', 'guangdong', '华南', '广东'}:
-        up_host = 'up-z2.qbox.me'
-        up_host_backup = 'upload-z2.qbox.me'
+        up_host = 'https://up-z2.qbox.me'
+        up_host_backup = 'https://upload-z2.qbox.me'
     if up_host:
         qiniu_config.set_default(default_zone=Region(up_host, up_host_backup or None))
 
