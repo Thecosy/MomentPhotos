@@ -339,22 +339,37 @@ class ImageProcessor:
         # 优先使用图库的 metadata.json 中的文件夹映射
         dir_path = os.path.dirname(file_path) if file_path else ''
         dir_meta = self._load_dir_metadata(dir_path) if dir_path else None
+
+        # 构建完整的相册路径（支持嵌套）
+        album_path_parts = []
+
         if dir_meta:
             folder_ids = dir_meta.get('folders') or []
             if isinstance(folder_ids, list) and folder_ids:
+                # 获取当前文件夹的名称
                 for folder_id in folder_ids:
-                    name = self.folder_name_map.get(folder_id)
-                    if name:
-                        return name
-        parts = relative_path.replace('\\', '/').split('/')
+                    folder_name = self.folder_name_map.get(folder_id)
+                    if folder_name:
+                        # 查找父文件夹
+                        parent_names = self._get_parent_folder_names(folder_id)
+                        if parent_names:
+                            album_path_parts = parent_names + [folder_name]
+                        else:
+                            album_path_parts = [folder_name]
+                        break
 
-        # 如果路径是 images/xxx 格式
-        if len(parts) >= 2 and parts[0] == 'images':
-            album_name = parts[1]
-        elif parts[0]:
-            album_name = parts[0]
+        # 如果通过 metadata 找到了完整路径，使用它
+        if album_path_parts:
+            album_name = '/'.join(album_path_parts)
         else:
-            album_name = 'default'
+            # 回退到路径推断
+            parts = relative_path.replace('\\', '/').split('/')
+            if len(parts) >= 2 and parts[0] == 'images':
+                album_name = parts[1]
+            elif parts[0]:
+                album_name = parts[0]
+            else:
+                album_name = 'default'
 
         # 检查相册名是否看起来像文件名（包含文件扩展名或以DSC/IMG等开头的编号）
         # 如果是，则归类到"未分类"
@@ -366,6 +381,40 @@ class ImageProcessor:
             return '未分类'
 
         return album_name
+
+    def _get_parent_folder_names(self, folder_id: str) -> list:
+        """递归获取父文件夹名称列表"""
+        parent_names = []
+
+        # 在根 metadata.json 中查找文件夹层级关系
+        root_metadata_path = os.path.join(self.directory_path, 'metadata.json')
+        if not os.path.exists(root_metadata_path):
+            return parent_names
+
+        try:
+            with open(root_metadata_path, 'r', encoding='utf-8') as f:
+                root_meta = json.load(f)
+                folders = root_meta.get('folders', [])
+
+                # 递归查找父文件夹
+                def find_parent_path(folders_list, target_id, current_path=[]):
+                    for folder in folders_list:
+                        if folder.get('id') == target_id:
+                            return current_path
+
+                        # 检查子文件夹
+                        children = folder.get('children', [])
+                        if children:
+                            result = find_parent_path(children, target_id, current_path + [folder.get('name')])
+                            if result is not None:
+                                return result
+                    return None
+
+                parent_names = find_parent_path(folders, folder_id) or []
+        except Exception as e:
+            logger.warning(f"读取根 metadata.json 失败: {e}")
+
+        return parent_names
 
     def _log_progress(self, message: str, progress: float | None = None):
         log_update_sqlite('upload', 'info', message, progress)
