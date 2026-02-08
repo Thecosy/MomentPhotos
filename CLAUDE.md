@@ -187,3 +187,8 @@ docker run -d \
   - Local deletion → Cloud deletion (automatic during upload)
   - Cloud deletion → Local deletion (automatic before next upload)
   - Deleted photos are tracked in `Momentography/data/deleted_photos.json`
+- **Photo movement sync**:
+  - Move photos between albums in admin panel
+  - Local files automatically moved to new album directory on next upload
+  - Movement records tracked in `Momentography/data/moved_photos.json`
+- **Uncategorized photos**: Photos with filename-like album names (DSC*, IMG*, etc.) are automatically grouped into "未分类" album
