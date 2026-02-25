@@ -369,7 +369,7 @@ export default function BrowsePage() {
                   className="group mb-4"
                 >
                   <div
-                    className="relative overflow-hidden rounded-lg cursor-pointer"
+                    className="relative overflow-hidden rounded-lg cursor-pointer min-h-[220px] bg-gray-100 dark:bg-gray-800"
                     onClick={() => setSelectedPhoto(photo)}
                   >
                     {!imageLoaded && (
