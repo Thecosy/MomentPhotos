@@ -361,6 +361,7 @@ export default function MapPage() {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [circlePhotos, setCirclePhotos] = useState<Photo[]>([]);
   const [selectedCircle, setSelectedCircle] = useState<{center: [number, number], radius: number} | null>(null);
@@ -375,10 +376,14 @@ export default function MapPage() {
         }
         
         const mapData = await response.json();
+        if (!Array.isArray(mapData)) {
+          throw new Error('地图数据格式无效');
+        }
         
         // 直接使用API返回的数据
         setPhotos(mapData);
       } catch (error) {
+        console.error('加载地图照片数据失败:', error);
         setError('加载照片数据时出错');
       } finally {
         setIsLoading(false);
