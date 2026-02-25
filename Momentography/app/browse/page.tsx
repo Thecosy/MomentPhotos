@@ -356,95 +356,105 @@ export default function BrowsePage() {
             className="flex -ml-4 w-auto"
             columnClassName="pl-4 bg-clip-padding"
           >
-            {filteredAndSortedPhotos.slice(0, displayCount).map((photo, index) => (
-              <motion.div
-                key={photo.id}
-                variants={itemVariants}
-                initial="hidden"
-                whileInView="visible"
-                viewport={{ once: true, margin: "0px" }}
-                className="group mb-4"
-              >
-                <div
-                  className="relative overflow-hidden rounded-lg cursor-pointer"
-                  onClick={() => setSelectedPhoto(photo)}
-                >
-                  <img
-                    src={photo.url}
-                    alt={photo.title}
-                    className={`w-full h-auto object-cover transition-all duration-700 group-hover:scale-105 ${
-                      loadedImages.has(photo.id) ? 'opacity-100' : 'opacity-0'
-                    }`}
-                    loading="lazy"
-                    onLoad={() => handleImageLoad(photo.id)}
-                  />
+            {filteredAndSortedPhotos.slice(0, displayCount).map((photo, index) => {
+              const imageLoaded = loadedImages.has(photo.id);
 
-                  {/* 悬停时显示的星级评分 - 只在底部添加阴影 */}
-                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent h-16 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
-                    <div className="flex">
-                      {[...Array(5)].map((_, i) => (
-                        <div key={i} className={`w-4 h-4 ${i < photo.star ? 'text-yellow-400' : 'text-gray-400'}`}>
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                            <path fillRule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.007 5.404.433c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.433 2.082-5.006z" clipRule="evenodd" />
-                          </svg>
-                        </div>
-                      ))}
+              return (
+                <motion.div
+                  key={photo.id}
+                  variants={itemVariants}
+                  initial="hidden"
+                  whileInView="visible"
+                  viewport={{ once: true, margin: "0px" }}
+                  className="group mb-4"
+                >
+                  <div
+                    className="relative overflow-hidden rounded-lg cursor-pointer"
+                    onClick={() => setSelectedPhoto(photo)}
+                  >
+                    {!imageLoaded && (
+                      <div className="absolute inset-0 z-10 bg-gray-100 dark:bg-gray-800 animate-pulse" />
+                    )}
+                    <img
+                      src={photo.url}
+                      alt={photo.title}
+                      className={`w-full h-auto object-cover transition-all duration-700 group-hover:scale-105 ${
+                        imageLoaded ? 'opacity-100' : 'opacity-0'
+                      }`}
+                      loading="lazy"
+                      onLoad={() => handleImageLoad(photo.id)}
+                      onError={() => handleImageLoad(photo.id)}
+                    />
+
+                    {/* 悬停时显示的星级评分 - 只在底部添加阴影 */}
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent h-16 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
+                      <div className="flex">
+                        {[...Array(5)].map((_, i) => (
+                          <div key={i} className={`w-4 h-4 ${i < photo.star ? 'text-yellow-400' : 'text-gray-400'}`}>
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                              <path fillRule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.007 5.404.433c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.433 2.082-5.006z" clipRule="evenodd" />
+                            </svg>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="mt-2 flex items-center justify-between">
-                  {/* 左侧显示地址信息 */}
-                  <div className="flex items-center text-sm text-gray-500">
-                    <MapPin size={14} className="mr-1" />
-                    <span className="truncate max-w-[150px]">{photo.location}</span>
+                  <div className={`mt-2 flex items-center justify-between transition-all duration-300 ${
+                    imageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1 pointer-events-none'
+                  }`}>
+                    {/* 左侧显示地址信息 */}
+                    <div className="flex items-center text-sm text-gray-500">
+                      <MapPin size={14} className="mr-1" />
+                      <span className="truncate max-w-[150px]">{photo.location}</span>
+                    </div>
+
+                    {/* 右侧显示爱心点赞图标和数量 */}
+                    <button
+                      onClick={(e) => handleLike(e, photo.id)}
+                      className="flex items-center group/like relative"
+                    >
+                      {/* 点赞爱心特效 - 每次点击都显示 */}
+                      <motion.div
+                        key={photo.likes} // 使用点赞数作为key，确保每次点击都触发动画
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{ scale: [1, 1.5, 1], opacity: [1, 1, 0] }}
+                        transition={{ duration: 0.8 }}
+                        className="absolute -top-4 -right-4 pointer-events-none"
+                      >
+                        {[...Array(6)].map((_, i) => (
+                          <motion.div
+                            key={i}
+                            initial={{ x: 0, y: 0, opacity: 1 }}
+                            animate={{
+                              x: Math.random() * 40 - 20,
+                              y: Math.random() * -30 - 10,
+                              opacity: 0
+                            }}
+                            transition={{ duration: Math.random() * 0.8 + 0.5, delay: Math.random() * 0.2 }}
+                            className="absolute text-red-500"
+                          >
+                            <Heart weight="fill" size={10} />
+                          </motion.div>
+                        ))}
+                      </motion.div>
+
+                      <motion.div
+                        whileTap={{ scale: 1.5 }}
+                        transition={{ type: "spring", stiffness: 400, damping: 10 }}
+                      >
+                        <Heart
+                          weight={clickedPhotos.has(photo.id) ? "fill" : "regular"}
+                          className={`${clickedPhotos.has(photo.id) ? 'text-red-500' : 'text-gray-400'} group-hover/like:text-red-500 transition-colors`}
+                          size={18}
+                        />
+                      </motion.div>
+                      <span className="ml-1 text-sm text-gray-600">{photo.likes}</span>
+                    </button>
                   </div>
-
-                  {/* 右侧显示爱心点赞图标和数量 */}
-                  <button
-                    onClick={(e) => handleLike(e, photo.id)}
-                    className="flex items-center group/like relative"
-                  >
-                    {/* 点赞爱心特效 - 每次点击都显示 */}
-                    <motion.div
-                      key={photo.likes} // 使用点赞数作为key，确保每次点击都触发动画
-                      initial={{ scale: 0, opacity: 0 }}
-                      animate={{ scale: [1, 1.5, 1], opacity: [1, 1, 0] }}
-                      transition={{ duration: 0.8 }}
-                      className="absolute -top-4 -right-4 pointer-events-none"
-                    >
-                      {[...Array(6)].map((_, i) => (
-                        <motion.div
-                          key={i}
-                          initial={{ x: 0, y: 0, opacity: 1 }}
-                          animate={{
-                            x: Math.random() * 40 - 20,
-                            y: Math.random() * -30 - 10,
-                            opacity: 0
-                          }}
-                          transition={{ duration: Math.random() * 0.8 + 0.5, delay: Math.random() * 0.2 }}
-                          className="absolute text-red-500"
-                        >
-                          <Heart weight="fill" size={10} />
-                        </motion.div>
-                      ))}
-                    </motion.div>
-
-                    <motion.div
-                      whileTap={{ scale: 1.5 }}
-                      transition={{ type: "spring", stiffness: 400, damping: 10 }}
-                    >
-                      <Heart
-                        weight={clickedPhotos.has(photo.id) ? "fill" : "regular"}
-                        className={`${clickedPhotos.has(photo.id) ? 'text-red-500' : 'text-gray-400'} group-hover/like:text-red-500 transition-colors`}
-                        size={18}
-                      />
-                    </motion.div>
-                    <span className="ml-1 text-sm text-gray-600">{photo.likes}</span>
-                  </button>
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              );
+            })}
           </Masonry>
         )}
 
