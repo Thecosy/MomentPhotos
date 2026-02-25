@@ -396,7 +396,6 @@ class ImageProcessor:
                     img.save(output_file, 'webp', quality=60, exif=exif_bytes)
                 else:
                     img.save(output_file, 'webp', quality=60)
-                add_watermark(output_file, output_file)
 
     def _process_raw_image(self, file_path, output_file):
         """处理 RAW 格式图片，转换为 WebP 并保留 EXIF"""
@@ -442,9 +441,6 @@ class ImageProcessor:
             if os.path.exists(temp_jpg):
                 os.remove(temp_jpg)
 
-            # 添加水印
-            add_watermark(output_file, output_file)
-
             logger.info(f"RAW 文件处理完成: {file_path} -> {output_file}")
 
         except Exception as e:
@@ -454,7 +450,6 @@ class ImageProcessor:
                 with Image.open(file_path) as img:
                     img = ImageOps.exif_transpose(img)
                     img.save(output_file, 'webp', quality=60)
-                    add_watermark(output_file, output_file)
                     logger.info(f"使用备用方法处理成功: {file_path}")
             except Exception as e2:
                 logger.error(f"备用处理也失败，跳过此文件: {e2}")
@@ -754,36 +749,6 @@ def parse_location_rg(exif_data):
     else:
         return "未知"
     
-
-def add_watermark(input_image_path, output_image_path, watermark_path='sy.png', opacity=0.8):
-    # 打开输入图片和水印图片
-    with Image.open(input_image_path) as base_image:
-        # 读取EXIF信息
-        exif_data = base_image.info.get('exif')
-        if not os.path.isabs(watermark_path):
-            watermark_path = os.path.join(os.path.dirname(__file__), watermark_path)
-        with Image.open(watermark_path) as watermark:
-            watermark = watermark.convert("RGBA")
-            alpha = watermark.split()[3]
-            alpha = alpha.point(lambda p: p * opacity)  # 设置不透明度
-            watermark.putalpha(alpha)
-            # 获取水印的尺寸
-            watermark_width, watermark_height = watermark.size
-            # watermark = watermark.resize((int(watermark_width*1.3), int(watermark_height*1.3)), Image.ANTIALIAS)
-            
-            # 计算水印的位置（左下角）
-            position = (15, base_image.height - watermark_height-20)
-            
-            # 创建一个可以在上面绘制的图像
-            base_image.paste(watermark, position, watermark)
-            
-            # 保存叠加后的图片
-            if exif_data:
-                base_image.save(output_image_path, exif=exif_data)
-            else:
-                base_image.save(output_image_path)
-            
-            
 
 def upload_folder_to_qiniu(src_folder, bucket_name, access_key, secret_key, domain, prefix="gallery/", full_upload: bool = False, sync_delete: bool = True):
     log_update_sqlite('upload', 'info', '开始上传到七牛', 90)
