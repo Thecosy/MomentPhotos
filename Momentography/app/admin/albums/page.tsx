@@ -6,7 +6,7 @@ import { motion } from 'framer-motion';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import { arrayMove, SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Trash, ArrowLeft } from '@phosphor-icons/react';
+import { Trash, ArrowLeft, CaretRight, CaretDown, Folder, FolderOpen } from '@phosphor-icons/react';
 import Link from 'next/link';
 
 interface AlbumImage {
@@ -23,6 +23,13 @@ interface Album {
   date?: string;
   cover_image?: string;
   images: AlbumImage[];
+  parent?: string; // 父相册ID
+  children?: Album[]; // 子相册
+}
+
+interface AlbumTree {
+  album: Album;
+  children: AlbumTree[];
 }
 
 function SortablePhoto({ image, selected }: { image: AlbumImage; selected: boolean }) {
@@ -52,6 +59,73 @@ function SortablePhoto({ image, selected }: { image: AlbumImage; selected: boole
   );
 }
 
+function AlbumTreeNode({
+  node,
+  selectedId,
+  onSelect,
+  level = 0,
+}: {
+  node: AlbumTree;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  level?: number;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const hasChildren = node.children.length > 0;
+
+  return (
+    <div>
+      <button
+        onClick={() => onSelect(node.album.id)}
+        className={`w-full text-left px-3 py-2 rounded-md flex items-center gap-2 ${
+          selectedId === node.album.id
+            ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+            : 'bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600'
+        }`}
+        style={{ paddingLeft: `${level * 16 + 12}px` }}
+      >
+        {hasChildren && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded(!expanded);
+            }}
+            className="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
+          >
+            {expanded ? <CaretDown size={14} /> : <CaretRight size={14} />}
+          </button>
+        )}
+        {!hasChildren && <div className="w-5" />}
+        {expanded && hasChildren ? (
+          <FolderOpen size={16} weight="fill" />
+        ) : (
+          <Folder size={16} weight="fill" />
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="font-medium truncate">{node.album.title || node.album.id}</div>
+          <div className="text-xs text-gray-500 dark:text-gray-400">
+            {node.album.images?.length || 0} 张
+          </div>
+        </div>
+      </button>
+
+      {expanded && hasChildren && (
+        <div className="mt-1 space-y-1">
+          {node.children.map((child) => (
+            <AlbumTreeNode
+              key={child.album.id}
+              node={child}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              level={level + 1}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AlbumsAdminPage() {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null);
@@ -62,6 +136,47 @@ export default function AlbumsAdminPage() {
     () => albums.find((a) => a.id === selectedAlbumId) || null,
     [albums, selectedAlbumId]
   );
+
+  // 构建相册树结构
+  const albumTree = useMemo(() => {
+    const buildTree = (albumsList: Album[]): AlbumTree[] => {
+      const rootAlbums: AlbumTree[] = [];
+      const albumMap = new Map<string, AlbumTree>();
+
+      // 初始化所有相册节点
+      albumsList.forEach((album) => {
+        albumMap.set(album.id, { album, children: [] });
+      });
+
+      // 构建树结构
+      albumsList.forEach((album) => {
+        const node = albumMap.get(album.id)!;
+
+        // 如果相册标题包含 "/"，说明是嵌套相册
+        if (album.title && album.title.includes('/')) {
+          const parts = album.title.split('/');
+          const parentTitle = parts.slice(0, -1).join('/');
+
+          // 查找父相册
+          const parentAlbum = albumsList.find((a) => a.title === parentTitle);
+          if (parentAlbum) {
+            const parentNode = albumMap.get(parentAlbum.id);
+            if (parentNode) {
+              parentNode.children.push(node);
+              return;
+            }
+          }
+        }
+
+        // 没有父相册，作为根节点
+        rootAlbums.push(node);
+      });
+
+      return rootAlbums;
+    };
+
+    return buildTree(albums);
+  }, [albums]);
 
   const loadAlbums = async () => {
     setError(null);
@@ -145,25 +260,17 @@ export default function AlbumsAdminPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-6">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
             <div className="text-sm text-gray-500 dark:text-gray-400 mb-3">相册列表</div>
-            <div className="space-y-2">
-              {albums.map((album) => (
-                <button
-                  key={album.id}
-                  onClick={() => setSelectedAlbumId(album.id)}
-                  className={`w-full text-left px-3 py-2 rounded-md ${
-                    selectedAlbumId === album.id
-                      ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                      : 'bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-200'
-                  }`}
-                >
-                  <div className="font-medium">{album.title || album.id}</div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                    {album.images?.length || 0} 张
-                  </div>
-                </button>
+            <div className="space-y-1">
+              {albumTree.map((node) => (
+                <AlbumTreeNode
+                  key={node.album.id}
+                  node={node}
+                  selectedId={selectedAlbumId}
+                  onSelect={setSelectedAlbumId}
+                />
               ))}
               {albums.length === 0 && (
                 <div className="text-sm text-gray-500 dark:text-gray-400">暂无相册</div>

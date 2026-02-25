@@ -13,10 +13,148 @@ from qiniu import Auth, put_file, Region
 import qiniu.config as qiniu_config
 import rawpy
 import imageio
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
+import requests
 # 加载 .env 文件中的环境变量
 load_dotenv()
 
 def log_update_sqlite(update_type: str, status: str, message: str, progress: float | None = None):
+    db_path = os.getenv('DB_PATH')
+    if not db_path:
+        repo_root = os.path.dirname(os.path.dirname(__file__))
+        db_path = os.path.join(repo_root, 'Momentography', 'data', 'gallery.db')
+
+    if not os.path.exists(db_path):
+        return
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS updates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status_code TEXT,
+                progress REAL
+            )
+        """)
+        cur.execute("PRAGMA table_info(updates)")
+        columns = [row[1] for row in cur.fetchall()]
+        if 'progress' not in columns:
+            cur.execute("ALTER TABLE updates ADD COLUMN progress REAL")
+        if 'status_code' not in columns:
+            cur.execute("ALTER TABLE updates ADD COLUMN status_code TEXT")
+
+        status_code = status
+        if status not in ['success', 'warning', 'error', 'partial_success', 'info']:
+            status_code = 'info'
+
+        cur.execute(
+            "INSERT INTO updates (type, status, message, status_code, progress) VALUES (?, ?, ?, ?, ?)",
+            (update_type, status, message, status_code, progress)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"记录更新日志失败: {e}")
+
+
+# 地理编码缓存
+_geocode_cache = {}
+
+# 常见城市坐标映射表（纬度，经度，详细地址）
+CITY_COORDINATES = {
+    '北京': (39.9042, 116.4074, '北京市'),
+    '北京/天坛': (39.8825, 116.4074, '北京市东城区天坛'),
+    '北京/故宫': (39.9163, 116.3972, '北京市东城区故宫博物院'),
+    '北京/故宫文物': (39.9163, 116.3972, '北京市东城区故宫博物院'),
+    '北京/颐和园': (39.9999, 116.2750, '北京市海淀区颐和园'),
+    '北京/长城': (40.4319, 116.5704, '北京市延庆区八达岭长城'),
+    '哈尔滨': (45.8038, 126.5340, '黑龙江省哈尔滨市'),
+    '大连': (38.9140, 121.6147, '辽宁省大连市'),
+    '沈阳': (41.8057, 123.4315, '辽宁省沈阳市'),
+    '沈阳/故宫': (41.7963, 123.4474, '辽宁省沈阳市沈河区沈阳故宫'),
+    '沈阳/故宫文物': (41.7963, 123.4474, '辽宁省沈阳市沈河区沈阳故宫'),
+    '泰山': (36.2549, 117.1014, '山东省泰安市泰山'),
+    '洛阳': (34.6197, 112.4540, '河南省洛阳市'),
+    '郑州': (34.7466, 113.6253, '河南省郑州市'),
+    '长白山': (42.0046, 128.0556, '吉林省延边朝鲜族自治州长白山'),
+    '大兴安岭': (52.3353, 124.1965, '黑龙江省大兴安岭地区'),
+    '上海': (31.2304, 121.4737, '上海市'),
+    '广州': (23.1291, 113.2644, '广东省广州市'),
+    '深圳': (22.5431, 114.0579, '广东省深圳市'),
+    '成都': (30.5728, 104.0668, '四川省成都市'),
+    '重庆': (29.5630, 106.5516, '重庆市'),
+    '西安': (34.3416, 108.9398, '陕西省西安市'),
+    '杭州': (30.2741, 120.1551, '浙江省杭州市'),
+    '南京': (32.0603, 118.7969, '江苏省南京市'),
+    '武汉': (30.5928, 114.3055, '湖北省武汉市'),
+    '天津': (39.3434, 117.3616, '天津市'),
+    '苏州': (31.2989, 120.5853, '江苏省苏州市'),
+}
+
+def get_location_coordinates(location_name: str) -> tuple[float, float, str] | None:
+    """
+    通过地名获取经纬度和详细地址
+    优先使用本地映射表，如果没有则尝试使用高德地图API
+    返回: (纬度, 经度, 详细地址) 或 None
+    """
+    # 检查缓存
+    if location_name in _geocode_cache:
+        return _geocode_cache[location_name]
+
+    # 跳过一些不需要查询的相册名
+    skip_names = ['博物馆', '我', '未分类', '']
+    if location_name in skip_names or not location_name:
+        return None
+
+    # 优先使用本地映射表
+    if location_name in CITY_COORDINATES:
+        result = CITY_COORDINATES[location_name]
+        _geocode_cache[location_name] = result
+        logger.info(f"从本地映射表获取位置: {location_name} -> {result[2]} ({result[0]}, {result[1]})")
+        return result
+
+    # 如果本地没有，尝试使用API（如果配置了的话）
+    try:
+        amap_key = os.getenv('AMAP_KEY', '')
+        if not amap_key:
+            return None
+
+        url = 'https://restapi.amap.com/v3/geocode/geo'
+        params = {
+            'key': amap_key,
+            'address': location_name,
+            'city': ''
+        }
+
+        response = requests.get(url, params=params, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('status') == '1' and data.get('geocodes'):
+                geocode = data['geocodes'][0]
+                location_str = geocode.get('location', '')
+                formatted_address = geocode.get('formatted_address', location_name)
+
+                if location_str and ',' in location_str:
+                    lon, lat = map(float, location_str.split(','))
+                    result = (lat, lon, formatted_address)
+                    _geocode_cache[location_name] = result
+                    logger.info(f"地理编码成功: {location_name} -> {formatted_address} ({lat}, {lon})")
+                    return result
+
+        return None
+
+    except Exception as e:
+        logger.error(f"地理编码出错 {location_name}: {e}")
+        return None
+
+
+def log_update_sqlite_old(update_type: str, status: str, message: str, progress: float | None = None):
     db_path = os.getenv('DB_PATH')
     if not db_path:
         repo_root = os.path.dirname(os.path.dirname(__file__))
@@ -117,7 +255,7 @@ class ImageProcessor:
         return [directory_path]
 
     def _load_root_folder_map(self) -> dict:
-        # 从图库根目录 metadata.json 读取文件夹 id -> name 映射
+        # 从图库根目录 metadata.json 读取文件夹 id -> name 映射（递归加载所有层级）
         metadata_path = os.path.join(self.directory_path, 'metadata.json')
         if not os.path.exists(metadata_path):
             return {}
@@ -125,8 +263,25 @@ class ImageProcessor:
             with open(metadata_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             folders = data.get('folders') or []
-            return {f.get('id'): f.get('name') for f in folders if f.get('id') and f.get('name')}
-        except Exception:
+
+            # 递归提取所有文件夹的 id -> name 映射
+            folder_map = {}
+
+            def extract_folders(folder_list):
+                for folder in folder_list:
+                    folder_id = folder.get('id')
+                    folder_name = folder.get('name')
+                    if folder_id and folder_name:
+                        folder_map[folder_id] = folder_name
+                    # 递归处理子文件夹
+                    children = folder.get('children', [])
+                    if children:
+                        extract_folders(children)
+
+            extract_folders(folders)
+            return folder_map
+        except Exception as e:
+            logger.warning(f"加载文件夹映射失败: {e}")
             return {}
 
     def _load_dir_metadata(self, dir_path: str) -> dict | None:
@@ -149,7 +304,9 @@ class ImageProcessor:
         logger.info("开始parse exif信息")
         self.save_exif_to_json()
         logger.info("保存EXIF信息到JSON文件")
-        processed = 0
+
+        # 收集所有需要处理的图片
+        image_tasks = []
         for scan_root in self.scan_roots:
             for root, dirnames, files in os.walk(scan_root):
                 # 跳过系统/隐藏目录，避免扫描照片库内部数据库和缓存
@@ -161,33 +318,53 @@ class ImageProcessor:
                     if '_thumbnail' in file_path.lower():
                         continue
                     if self._is_image_file(file):
-                        try:
-                            logger.info(f"开始处理图片: {file}")
-                            rel_path = os.path.relpath(file_path, self.directory_path)
-                            album_id = self._infer_album_id(rel_path, file_path)
-                            filename = os.path.basename(file_path).rsplit('.', 1)[0] + '.webp'
-                            output_file = os.path.join(self.output_dir, album_id, filename)
-                            output_file_dir = os.path.dirname(output_file)
-
-                            if not os.path.exists(output_file_dir):
-                                os.makedirs(output_file_dir)
-
-                            self.process_image(file_path, output_file)
-                            processed += 1
-                            if processed % 20 == 0:
-                                total = getattr(self, 'total_images', 0) or 0
-                                if total:
-                                    progress = min(90, round(processed * 80 / total, 2))
-                                    self._log_progress(f"已处理 {processed}/{total}", progress)
-                        except Exception as e:
-                            logger.error(f"处理图片失败 {file_path}: {e}")
-                            # 跳过有问题的文件，继续处理下一张
-                            continue
+                        rel_path = os.path.relpath(file_path, self.directory_path)
+                        album_id = self._infer_album_id(rel_path, file_path)
+                        filename = os.path.basename(file_path).rsplit('.', 1)[0] + '.webp'
+                        output_file = os.path.join(self.output_dir, album_id, filename)
+                        image_tasks.append((file_path, output_file, album_id))
                     elif file.endswith('.yaml'):
                         self.copy_yaml_file(root, file, self.output_dir)
-        total = getattr(self, 'total_images', 0) or 0
-        if total:
-            self._log_progress(f"处理完成 {processed}/{total}", 90)
+
+        total = len(image_tasks)
+        logger.info(f"共找到 {total} 张图片需要处理")
+
+        # 使用线程池并行处理（使用4个线程）
+        processed = 0
+        failed = 0
+        progress_lock = Lock()
+
+        def process_single_image(task):
+            file_path, output_file, album_id = task
+            try:
+                output_file_dir = os.path.dirname(output_file)
+                if not os.path.exists(output_file_dir):
+                    os.makedirs(output_file_dir, exist_ok=True)
+
+                self.process_image(file_path, output_file)
+                return True, file_path
+            except Exception as e:
+                logger.error(f"处理图片失败 {file_path}: {e}")
+                return False, file_path
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(process_single_image, task): task for task in image_tasks}
+
+            for future in as_completed(futures):
+                success, file_path = future.result()
+                with progress_lock:
+                    if success:
+                        processed += 1
+                    else:
+                        failed += 1
+
+                    if (processed + failed) % 10 == 0:
+                        progress = min(90, round((processed + failed) * 80 / total, 2))
+                        logger.info(f"进度: {processed + failed}/{total} (成功: {processed}, 失败: {failed})")
+                        self._log_progress(f"已处理 {processed + failed}/{total}", progress)
+
+        logger.info(f"处理完成: 成功 {processed}/{total}, 失败 {failed}")
+        self._log_progress(f"处理完成 {processed}/{total}", 90)
                     
     def copy_yaml_file(self, root, file, output_dir):
         file_path = os.path.join(root, file)
@@ -304,6 +481,40 @@ class ImageProcessor:
                                 readable_exif = convert_exif_to_dict(tags)
                                 relative_path = os.path.relpath(file_path, self.directory_path)
                                 album_id = self._infer_album_id(relative_path, file_path)
+
+                                # 如果EXIF中没有GPS信息，尝试从相册名称推导
+                                has_gps = readable_exif.get('Latitude') and readable_exif.get('Longitude')
+                                if not has_gps and album_id:
+                                    # 尝试多种方式获取位置信息
+                                    location_info = None
+
+                                    # 方式1: 尝试用完整路径（如"北京/天坛"）
+                                    if '/' in album_id:
+                                        location_info = get_location_coordinates(album_id)
+
+                                    # 方式2: 如果完整路径没找到，尝试用最后一级（如"天坛"）
+                                    if not location_info and '/' in album_id:
+                                        last_level = album_id.split('/')[-1]
+                                        location_info = get_location_coordinates(last_level)
+
+                                    # 方式3: 如果还是没找到，尝试用第一级（如"北京"）
+                                    if not location_info and '/' in album_id:
+                                        first_level = album_id.split('/')[0]
+                                        location_info = get_location_coordinates(first_level)
+
+                                    # 方式4: 如果不是嵌套路径，直接用相册名
+                                    if not location_info:
+                                        location_info = get_location_coordinates(album_id)
+
+                                    if location_info:
+                                        lat, lon, formatted_address = location_info
+                                        readable_exif['Latitude'] = lat
+                                        readable_exif['Longitude'] = lon
+                                        # 如果没有位置信息，也填充上
+                                        if not readable_exif.get('location'):
+                                            readable_exif['location'] = formatted_address
+                                        logger.info(f"从相册名称推导位置: {album_id} -> {formatted_address}")
+
                                 # 使用 .webp 扩展名作为键，因为上传的文件是 webp 格式
                                 base_name = os.path.basename(file_path)
                                 name_without_ext = os.path.splitext(base_name)[0]
@@ -695,24 +906,26 @@ if __name__ == '__main__':
         print(f"开始处理目录: {directory_to_process}")
 
         # 在处理前先删除本地已在云端删除的文件
-        try:
-            import sys
-            sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-            from delete_local_files import delete_local_files
-            print("开始同步删除本地文件...")
-            delete_local_files()
-        except Exception as e:
-            print(f"本地文件删除同步失败: {e}")
+        # 注释掉：不自动删除本地文件
+        # try:
+        #     import sys
+        #     sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+        #     from delete_local_files import delete_local_files
+        #     print("开始同步删除本地文件...")
+        #     delete_local_files()
+        # except Exception as e:
+        #     print(f"本地文件删除同步失败: {e}")
 
         # 在处理前先移动本地文件到新相册
-        try:
-            import sys
-            sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-            from move_local_files import move_local_files
-            print("开始同步移动本地文件...")
-            move_local_files()
-        except Exception as e:
-            print(f"本地文件移动同步失败: {e}")
+        # 注释掉：不自动移动本地文件
+        # try:
+        #     import sys
+        #     sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+        #     from move_local_files import move_local_files
+        #     print("开始同步移动本地文件...")
+        #     move_local_files()
+        # except Exception as e:
+        #     print(f"本地文件移动同步失败: {e}")
 
         full_upload = os.getenv('FULL_UPLOAD') == '1'
         # loguru 日志文件（写入项目内 output，避免库目录权限问题）

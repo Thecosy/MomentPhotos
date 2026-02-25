@@ -8,6 +8,7 @@ import { Dialog } from '@headlessui/react';
 import { formatDate, parseExifDate } from '@/app/utils/dateFormat';
 import 'leaflet/dist/leaflet.css';
 import AMapContainer from '@/app/components/AMapContainer';
+import Masonry from 'react-masonry-css';
 import { MAP_CONFIG } from '@/app/config/map';
 
 // 在组件内部动态导入 Leaflet
@@ -98,6 +99,36 @@ export default function BrowsePage() {
   const [cameras, setCameras] = useState<string[]>([]);
   const [locations, setLocations] = useState<string[]>([]);
   const [clickedPhotos, setClickedPhotos] = useState<Set<string>>(new Set());
+  const [displayCount, setDisplayCount] = useState(40); // 初始显示40张，确保首屏有内容
+  const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set()); // 跟踪已加载的图片
+
+  // 滚动加载更多
+  useEffect(() => {
+    const handleScroll = () => {
+      // 当滚动到距离底部 800px 时加载更多
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 800) {
+        setDisplayCount(prev => Math.min(prev + 20, photos.length));
+      }
+    };
+
+    // 初始检查是否需要加载更多（页面高度不够时）
+    const checkInitialLoad = () => {
+      if (document.documentElement.scrollHeight <= window.innerHeight && displayCount < photos.length) {
+        setDisplayCount(prev => Math.min(prev + 20, photos.length));
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    // 延迟检查，确保DOM已渲染
+    setTimeout(checkInitialLoad, 100);
+
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [photos.length, displayCount]);
+
+  // 图片加载完成的回调
+  const handleImageLoad = (photoId: string) => {
+    setLoadedImages(prev => new Set([...prev, photoId]));
+  };
 
   useEffect(() => {
     async function loadPhotos() {
@@ -194,9 +225,9 @@ export default function BrowsePage() {
 
   const itemVariants = {
     hidden: {
-      y: 50, // 从下方50px开始
+      y: 20, // 从下方20px开始（更小的距离）
       opacity: 0,
-      scale: 0.9 // 稍微缩小
+      scale: 0.95 // 轻微缩小
     },
     visible: {
       y: 0,
@@ -204,9 +235,9 @@ export default function BrowsePage() {
       scale: 1,
       transition: {
         type: "spring",
-        stiffness: 100,
-        damping: 15,
-        duration: 0.6
+        stiffness: 80,
+        damping: 20,
+        duration: 0.8
       }
     }
   };
@@ -304,28 +335,35 @@ export default function BrowsePage() {
 
             {/* 显示筛选结果数量 */}
             <div className="ml-auto text-sm text-gray-500 dark:text-gray-400">
-              显示 {filteredAndSortedPhotos.length} 张照片
+              显示 {Math.min(displayCount, filteredAndSortedPhotos.length)} / {filteredAndSortedPhotos.length} 张照片
             </div>
           </div>
         </div>
 
-        {/* 照片网格 - 瀑布流布局 */}
+        {/* 照片网格 - 使用react-masonry-css瀑布流 */}
         {isLoading ? (
           <div className="flex justify-center">
             <div className="w-12 h-12 border-4 border-gray-300 border-t-gray-800 rounded-full animate-spin" />
           </div>
         ) : (
-          <motion.div
-            className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-6 space-y-6"
+          <Masonry
+            breakpointCols={{
+              default: 4,
+              1280: 3,
+              1024: 2,
+              640: 1
+            }}
+            className="flex -ml-4 w-auto"
+            columnClassName="pl-4 bg-clip-padding"
           >
-            {filteredAndSortedPhotos.map((photo, index) => (
+            {filteredAndSortedPhotos.slice(0, displayCount).map((photo, index) => (
               <motion.div
                 key={photo.id}
                 variants={itemVariants}
                 initial="hidden"
                 whileInView="visible"
-                viewport={{ once: true, margin: "-50px" }}
-                className="group break-inside-avoid mb-6"
+                viewport={{ once: true, margin: "0px" }}
+                className="group mb-4"
               >
                 <div
                   className="relative overflow-hidden rounded-lg cursor-pointer"
@@ -334,8 +372,11 @@ export default function BrowsePage() {
                   <img
                     src={photo.url}
                     alt={photo.title}
-                    className="w-full h-auto object-cover transition-transform group-hover:scale-105 duration-500"
+                    className={`w-full h-auto object-cover transition-all duration-700 group-hover:scale-105 ${
+                      loadedImages.has(photo.id) ? 'opacity-100' : 'opacity-0'
+                    }`}
                     loading="lazy"
+                    onLoad={() => handleImageLoad(photo.id)}
                   />
 
                   {/* 悬停时显示的星级评分 - 只在底部添加阴影 */}
@@ -404,7 +445,25 @@ export default function BrowsePage() {
                 </div>
               </motion.div>
             ))}
-          </motion.div>
+          </Masonry>
+        )}
+
+        {/* 加载更多提示 */}
+        {!isLoading && displayCount < filteredAndSortedPhotos.length && (
+          <div className="flex justify-center py-8">
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              向下滚动加载更多...
+            </div>
+          </div>
+        )}
+
+        {/* 已加载全部提示 */}
+        {!isLoading && displayCount >= filteredAndSortedPhotos.length && filteredAndSortedPhotos.length > 0 && (
+          <div className="flex justify-center py-8">
+            <div className="text-sm text-gray-400 dark:text-gray-500">
+              已加载全部照片
+            </div>
+          </div>
         )}
       </div>
 

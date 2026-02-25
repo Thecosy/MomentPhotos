@@ -301,14 +301,14 @@ export default function AdminPage() {
         },
         body: JSON.stringify({ photoId, star: newStar }),
       });
-      
+
       if (!response.ok) {
         throw new Error('更新星级失败');
       }
-      
+
       // 更新本地状态
-      setPhotos(prevPhotos => 
-        prevPhotos.map(photo => 
+      setPhotos(prevPhotos =>
+        prevPhotos.map(photo =>
           photo.id === photoId ? { ...photo, star: newStar } : photo
         )
       );
@@ -316,6 +316,14 @@ export default function AdminPage() {
       console.error('更新星级失败:', error);
       throw error;
     }
+  };
+
+  // 处理照片删除
+  const handlePhotoDelete = (photoId: string) => {
+    // 从本地状态中移除照片
+    setPhotos(prevPhotos => prevPhotos.filter(photo => photo.id !== photoId));
+    // 关闭详情弹窗
+    setSelectedPhoto(null);
   };
 
   // 处理同步数据
@@ -1110,6 +1118,7 @@ export default function AdminPage() {
           onClose={handlePhotoDetailClose}
           onStarUpdate={handleStarUpdate}
           onRefresh={loadPhotos}
+          onDelete={handlePhotoDelete}
         />
       )}
     </div>

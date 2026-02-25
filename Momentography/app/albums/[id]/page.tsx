@@ -8,6 +8,7 @@ import { Dialog } from '@headlessui/react';
 import { MapPin, Calendar, Camera, X } from '@phosphor-icons/react';
 import AMapContainer from '@/app/components/AMapContainer';
 import { formatDate, parseExifDate } from '@/app/utils/dateFormat';
+import Masonry from 'react-masonry-css';
 
 interface Photo {
   id: string;
@@ -54,6 +55,26 @@ export default function AlbumPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [displayCount, setDisplayCount] = useState(20); // 初始显示20张
+  const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set()); // 跟踪已加载的图片
+
+  // 滚动加载更多
+  useEffect(() => {
+    const handleScroll = () => {
+      // 当滚动到距离底部 500px 时加载更多
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 500) {
+        setDisplayCount(prev => Math.min(prev + 20, photos.length));
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [photos.length]);
+
+  // 图片加载完成的回调
+  const handleImageLoad = (photoId: string) => {
+    setLoadedImages(prev => new Set([...prev, photoId]));
+  };
 
   useEffect(() => {
     async function loadAlbum() {
@@ -189,34 +210,70 @@ export default function AlbumPage() {
           </div>
         </div>
       </motion.div>
-      
-      {/* 照片网格 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {photos.map((photo, index) => (
+
+      {/* 照片数量提示 */}
+      <div className="text-center mb-6 text-sm text-gray-500 dark:text-gray-400">
+        显示 {Math.min(displayCount, photos.length)} / {photos.length} 张照片
+      </div>
+
+      {/* 照片网格 - 使用react-masonry-css瀑布流 */}
+      <Masonry
+        breakpointCols={{
+          default: 4,
+          1280: 3,
+          1024: 2,
+          640: 1
+        }}
+        className="flex -ml-4 w-auto"
+        columnClassName="pl-4 bg-clip-padding"
+      >
+        {photos.slice(0, displayCount).map((photo, index) => (
           <motion.div
             key={photo.id}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.1 }}
-            className="cursor-pointer"
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            whileInView={{ opacity: 1, y: 0, scale: 1 }}
+            viewport={{ once: true, margin: "-100px" }}
+            transition={{
+              type: "spring",
+              stiffness: 80,
+              damping: 20,
+              duration: 0.8
+            }}
+            className="cursor-pointer group"
             onClick={() => setSelectedPhoto(photo)}
           >
-            <div className={`relative rounded-lg overflow-hidden ${
-              (photo.exif?.orientation || '') && /90|270|Rotated 90|Rotated 270/i.test(photo.exif.orientation || '')
-                ? 'aspect-[3/4]'
-                : 'aspect-[4/3]'
-            }`}>
-              <Image
+            <div className="relative rounded-lg overflow-hidden mb-4">
+              <img
                 src={photo.url}
                 alt={`${album.title} - 照片 ${index + 1}`}
-                fill
-                className="object-cover hover:scale-105 transition-transform duration-500"
-                sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                className={`w-full h-auto object-cover transition-all duration-700 group-hover:scale-105 ${
+                  loadedImages.has(photo.id) ? 'opacity-100' : 'opacity-0'
+                }`}
+                loading="lazy"
+                onLoad={() => handleImageLoad(photo.id)}
               />
             </div>
           </motion.div>
         ))}
-      </div>
+      </Masonry>
+
+      {/* 加载更多提示 */}
+      {displayCount < photos.length && (
+        <div className="flex justify-center py-8">
+          <div className="text-sm text-gray-500 dark:text-gray-400">
+            向下滚动加载更多...
+          </div>
+        </div>
+      )}
+
+      {/* 已加载全部提示 */}
+      {displayCount >= photos.length && photos.length > 0 && (
+        <div className="flex justify-center py-8">
+          <div className="text-sm text-gray-400 dark:text-gray-500">
+            已加载全部照片
+          </div>
+        </div>
+      )}
       
       {/* 照片详情弹窗 */}
       <Dialog

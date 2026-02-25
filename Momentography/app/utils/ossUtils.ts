@@ -260,7 +260,13 @@ export async function updateAlbumsJsonData() {
 
       if (key.endsWith('.webp')) {
         const parts = key.split('/');
-        const albumId = parts[1];
+        // 移除第一个元素（prefix）和最后一个元素（文件名）
+        // 剩下的部分组成相册ID（支持嵌套路径）
+        if (parts.length < 3) continue; // 至少需要 prefix/album/file.webp
+
+        const albumParts = parts.slice(1, -1); // 去掉 prefix 和文件名
+        const albumId = albumParts.join('/'); // 用 / 连接，支持嵌套
+
         if (albumId === 'images') {
           continue;
         }
