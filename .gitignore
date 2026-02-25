@@ -7,6 +7,8 @@ __pycache__/
 *.log
 local_image_process/output/
 data/
+!Momentography/app/api/data/
+!Momentography/app/api/data/**
 Momentography/node_modules/
 Momentography/.next/
 Momentography/backup_data/

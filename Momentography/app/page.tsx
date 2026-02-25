@@ -149,7 +149,7 @@ export default function Home() {
         }, 50);
 
       } catch (error) {
-        setError('加载精选照片时出错');
+        console.error('加载精选照片时出错:', error);
       } finally {
         setIsLoading(false);
       }
